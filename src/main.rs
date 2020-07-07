@@ -58,7 +58,6 @@ struct Loader {
     cursor: Cursor<Vec<u8>>,
 }
 
-#[allow(dead_code)]
 impl Loader {
     fn new(file: &mut File) -> Self {
         let mut buf = Vec::new();
@@ -160,12 +159,71 @@ impl Class {
         let attributes = loader.attrs(&const_pool);
         Class { const_pool, flags, name, super_, interfaces, fields, methods, attributes }
     }
+
+    fn frame(&self, method: String, args: Vec<i32>) -> Option<Frame> {
+        for m in &self.methods {
+            if m.name == method {
+                for a in &m.attributes {
+                    if a.name == "Code" && a.data.len() > 8 {
+                        return Some(Frame {
+                            class: self,
+                            ip: 0,
+                            code: a.data[8..].to_vec(),
+                            locals: args,
+                            stack: Vec::new(),
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+#[allow(dead_code)]
+struct Frame<'a> {
+    class: &'a Class,
+    ip: u32,
+    code: Vec<u8>,
+    locals: Vec<i32>,
+    stack: Vec<i32>,
+}
+
+fn exec(frame: &mut Frame) -> i32 {
+    loop {
+        let op = frame.code[frame.ip as usize];
+        println!("OP: {:>02x} {:?}", op, frame.stack);
+        match op {
+            // iload_0
+            26 => frame.stack.push(frame.locals[0]),
+            // iload_1
+            27 => frame.stack.push(frame.locals[1]),
+            // iadd
+            96 => {
+                match (frame.stack.pop(), frame.stack.pop()) {
+                    (Some(a), Some(b)) => frame.stack.push(a + b),
+                    _ => panic!("Arguments number does not match"),
+                }
+            }
+            // ireturn
+            172 => {
+                if let Some(v) = frame.stack.pop() {
+                    return v;
+                } else {
+                    panic!("No return values");
+                }
+            }
+            n => panic!("unsupported operator {:?}", n)
+        }
+        frame.ip += 1;
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut file = File::open("Add.class")?;
     let class = Class::new(&mut file);
-
-    println!("{:?}", class);
+    let mut frame = class.frame("add".into(), vec![2, 3]).unwrap();
+    let result = exec(&mut frame);
+    println!("{:?}", result);
     Ok(())
 }
