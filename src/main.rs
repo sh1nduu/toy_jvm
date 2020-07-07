@@ -31,6 +31,29 @@ impl Const {
 #[derive(Debug)]
 struct ConstPool(Vec<Const>);
 
+impl ConstPool {
+    fn resolve(&self, index: usize) -> Option<String> {
+        if self.0[index - 1].tag == 0x01 {
+            self.0[index - 1].string.clone()
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Field {
+    flags: u16,
+    name: String,
+    descriptor: String,
+    attributes: Vec<Attribute>,
+}
+
+#[derive(Debug)]
+struct Attribute {
+    name: String,
+    data: Vec<u8>,
+}
 struct Loader {
     cursor: Cursor<Vec<u8>>,
 }
@@ -90,19 +113,59 @@ impl Loader {
 
         ConstPool(const_pool)
     }
+    fn interfaces(&mut self, cp: &ConstPool) -> Vec<String> {
+        (0..self.u2()).filter_map(|_| cp.resolve(self.u2() as usize)).collect()
+    }
+    fn fields(&mut self, cp: &ConstPool) -> Vec<Field> {
+        (0..self.u2()).map(|_| Field {
+            flags: self.u2(),
+            name: cp.resolve(self.u2() as usize).unwrap_or("".into()),
+            descriptor: cp.resolve(self.u2() as usize).unwrap_or("".into()),
+            attributes: self.attrs(cp),
+        }).collect()
+    }
+    fn attrs(&mut self, cp: &ConstPool) -> Vec<Attribute> {
+        (0..self.u2()).map(|_| {
+            let name = cp.resolve(self.u2() as usize).unwrap_or("".into());
+            let data_size = self.u4() as usize;
+            let data = self.bytes(data_size);
+            Attribute { name, data }
+        }).collect()
+    }
+}
+
+#[derive(Debug)]
+struct Class {
+    const_pool: ConstPool,
+    name: String,
+    super_: String,
+    flags: u16,
+    interfaces: Vec<String>,
+    fields: Vec<Field>,
+    methods: Vec<Field>,
+    attributes: Vec<Attribute>,
+}
+
+impl Class {
+    fn new(file: &mut File) -> Self {
+        let mut loader = Loader::new(file);
+        loader.u8();
+        let const_pool = loader.cpinfo();
+        let flags = loader.u2();
+        let name = const_pool.resolve(loader.u2() as usize).unwrap_or("".into());
+        let super_ = const_pool.resolve(loader.u2() as usize).unwrap_or("".into());
+        let interfaces = loader.interfaces(&const_pool);
+        let fields = loader.fields(&const_pool);
+        let methods = loader.fields(&const_pool);
+        let attributes = loader.attrs(&const_pool);
+        Class { const_pool, flags, name, super_, interfaces, fields, methods, attributes }
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut file = File::open("Add.class")?;
-    let mut loader = Loader::new(&mut file);
-    let cafebabe = loader.u4();
-    let major = loader.u2();
-    let minor = loader.u2();
+    let class = Class::new(&mut file);
 
-    println!("cafebabe {}, major {}, minor {}", cafebabe, major, minor);
-
-    let const_pool = loader.cpinfo();
-
-    println!("{:?}", const_pool);
+    println!("{:?}", class);
     Ok(())
 }
